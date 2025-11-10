@@ -79,35 +79,32 @@ class ReferenceResolver:
         Raises:
             ValueError: If the reference is invalid
         """
-        # Check if it looks like a reference (contains a dot)
-        if "." not in ref:
-            # It's just a literal string
-            return ref
-
-        # Try to parse as reference
+        # Check if it's a reference to a step (with or without field)
         parts = ref.split(".")
-        if len(parts) < 2:
-            return ref
-
         step_id = parts[0]
-        field_path = parts[1:]
 
         # Check if this step exists in results
-        if step_id not in self.step_results:
-            # Not a valid reference, treat as literal string
+        if step_id in self.step_results:
+            # It's a reference to a step
+            if len(parts) == 1:
+                # Just the step ID, return the whole object
+                return self.step_results[step_id]
+            else:
+                # Navigate through the field path
+                current = self.step_results[step_id]
+                field_path = parts[1:]
+                try:
+                    for field in field_path:
+                        if isinstance(current, dict):
+                            current = current[field]
+                        else:
+                            raise ValueError(f"Cannot access field '{field}' on non-dict value")
+                    return current
+                except (KeyError, TypeError) as e:
+                    raise ValueError(f"Reference '{ref}' could not be resolved: {e}") from e
+        else:
+            # Not a reference to a step, treat as literal string
             return ref
-
-        # Navigate through the field path
-        current = self.step_results[step_id]
-        try:
-            for field in field_path:
-                if isinstance(current, dict):
-                    current = current[field]
-                else:
-                    raise ValueError(f"Cannot access field '{field}' on non-dict value")
-            return current
-        except (KeyError, TypeError) as e:
-            raise ValueError(f"Reference '{ref}' could not be resolved: {e}") from e
 
     def resolve_params(self, params: dict[str, Any]) -> dict[str, Any]:
         """
