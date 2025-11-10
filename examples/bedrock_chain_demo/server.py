@@ -66,6 +66,151 @@ async def list_tools() -> list[types.Tool]:
     """List all available tools with their schemas."""
     return [
         types.Tool(
+            name="chain_tools",
+            description="""Execute multiple tools in sequence with automatic reference resolution.
+
+This tool allows you to chain multiple tool calls together. Results from earlier steps
+can be referenced in later steps using dot notation (e.g., "step1.field" or just "step1"
+for the whole object).
+
+Example chain to fetch a user and analyze their bio:
+{
+  "chain": [
+    {
+      "tool": "fetch_user_data",
+      "id": "user",
+      "params": {"user_id": "user123"}
+    },
+    {
+      "tool": "analyze_sentiment",
+      "id": "sentiment",
+      "params": {
+        "text": "user.bio",
+        "detailed": false
+      }
+    }
+  ],
+  "returnFormat": "final_only"
+}
+
+Each step must have:
+- tool: Name of the tool to call
+- id: Unique identifier for this step (used for referencing results)
+- params: Parameters for the tool (can include references like "stepId.field")
+
+Optional step fields:
+- onSuccess: {action: "continue" | "stop_and_return", returnStep?: "stepId"}
+- onFailure: {action: "abort" | "return_step" | "skip_and_continue", returnStep?: "stepId", retry?: boolean}
+- validation: {requireField?: "fieldName", requireNonEmpty?: boolean}
+
+Reference syntax:
+- "stepId.field" - Access a specific field from a previous step's result
+- "stepId" - Use the entire result object from a previous step
+- Nested fields: "step1.metrics.followers"
+
+returnFormat options:
+- "final_only": Return only the last step's result (default)
+- "full": Return all intermediate results
+
+Use this tool when you need to:
+1. Perform multi-step workflows
+2. Pass data between tools
+3. Build complex operations from simple tools
+4. Avoid passing large intermediate results through the conversation
+""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "chain": {
+                        "type": "array",
+                        "description": "Sequence of tool calls to execute",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "tool": {"type": "string", "description": "Name of tool to call"},
+                                "id": {
+                                    "type": "string",
+                                    "description": "Unique ID for this step (for referencing)",
+                                },
+                                "params": {
+                                    "type": "object",
+                                    "description": "Tool parameters (can use references like 'stepId.field')",
+                                },
+                                "onSuccess": {
+                                    "type": "object",
+                                    "description": "Optional success handling",
+                                    "properties": {
+                                        "action": {"type": "string", "enum": ["continue", "stop_and_return"]},
+                                        "returnStep": {"type": "string"},
+                                    },
+                                },
+                                "onFailure": {
+                                    "type": "object",
+                                    "description": "Optional error handling",
+                                    "properties": {
+                                        "action": {
+                                            "type": "string",
+                                            "enum": ["abort", "return_step", "skip_and_continue"],
+                                        },
+                                        "returnStep": {"type": "string"},
+                                        "retry": {"type": "boolean"},
+                                    },
+                                },
+                                "validation": {
+                                    "type": "object",
+                                    "description": "Optional output validation",
+                                    "properties": {
+                                        "requireField": {"type": "string"},
+                                        "requireNonEmpty": {"type": "boolean"},
+                                    },
+                                },
+                            },
+                            "required": ["tool", "id", "params"],
+                        },
+                    },
+                    "returnFormat": {
+                        "type": "string",
+                        "enum": ["final_only", "full"],
+                        "default": "final_only",
+                        "description": "Whether to return only final result or all steps",
+                    },
+                    "timeout": {
+                        "type": "number",
+                        "description": "Optional timeout in seconds for entire chain",
+                    },
+                },
+                "required": ["chain"],
+            },
+            outputSchema={
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["success", "partial_success", "failed"],
+                        "description": "Overall execution status",
+                    },
+                    "result": {
+                        "description": "The final result or all results depending on returnFormat",
+                    },
+                    "stepsExecuted": {
+                        "type": "array",
+                        "description": "Details of each step executed",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "stepId": {"type": "string"},
+                                "status": {"type": "string"},
+                                "executionTime": {"type": "number"},
+                                "result": {},
+                                "error": {"type": "string"},
+                            },
+                        },
+                    },
+                    "error": {"type": "string", "description": "Error message if chain failed"},
+                },
+            },
+        ),
+        types.Tool(
             name="fetch_user_data",
             description="Fetch complete user profile data including bio, posts, and metrics",
             inputSchema={
@@ -239,7 +384,48 @@ async def call_tool(name: str, arguments: dict) -> dict:
     """Handle individual tool calls."""
     logger.info(f"Calling tool: {name} with arguments: {json.dumps(arguments, indent=2)}")
 
-    if name == "fetch_user_data":
+    if name == "chain_tools":
+        # LLM has decided to chain tools!
+        # Convert the arguments into a ChainToolRequest and execute it
+        from mcp.server.lowlevel.chain import ChainExecutor, ChainValidator
+
+        # Parse chain steps
+        chain_data = arguments.get("chain", [])
+        return_format = arguments.get("returnFormat", "final_only")
+        timeout = arguments.get("timeout")
+
+        # Convert dict steps to ChainStep objects
+        chain_steps = []
+        for step_dict in chain_data:
+            step = types.ChainStep(
+                tool=step_dict["tool"],
+                id=step_dict["id"],
+                params=step_dict["params"],
+                onSuccess=(types.ChainStepOnSuccess(**step_dict["onSuccess"]) if step_dict.get("onSuccess") else None),
+                onFailure=(types.ChainStepOnFailure(**step_dict["onFailure"]) if step_dict.get("onFailure") else None),
+                validation=(
+                    types.ChainStepValidation(**step_dict["validation"]) if step_dict.get("validation") else None
+                ),
+            )
+            chain_steps.append(step)
+
+        logger.info(f"🔗 Executing chain with {len(chain_steps)} steps")
+
+        # Validate chain
+        validator = ChainValidator(server._tool_cache)
+        try:
+            validator.validate_chain(chain_steps)
+        except Exception as e:
+            logger.exception("Chain validation failed")
+            return {"status": "failed", "error": f"Chain validation failed: {e}", "stepsExecuted": []}
+
+        # Execute chain
+        executor = ChainExecutor(server._tool_cache, chain_tool_executor)
+        result = await executor.execute_chain(chain_steps, return_format, timeout)
+
+        return result
+
+    elif name == "fetch_user_data":
         user_id = arguments["user_id"]
         user = USERS_DB.get(user_id)
 
@@ -446,20 +632,167 @@ async def call_tool(name: str, arguments: dict) -> dict:
         )
 
 
-@server.chain_tools()
-async def chain_tools(tool_name: str, arguments: dict) -> dict:
+async def chain_tool_executor(tool_name: str, arguments: dict) -> dict:
     """
-    Handle chained tool calls.
+    Execute individual tools within a chain.
+    This is called by ChainExecutor for each step.
+    """
+    logger.info(f"  → Step executing tool: {tool_name}")
 
-    This re-uses the call_tool logic for execution.
-    The server framework handles:
-    - Validation of the entire chain
-    - Reference resolution (e.g., "step1.field")
-    - Error handling strategies
-    - Keeping intermediate results server-side
+    # Execute the tool using the same logic as call_tool, but skip chain_tools
+    if tool_name == "fetch_user_data":
+        user_id = arguments["user_id"]
+        user = USERS_DB.get(user_id)
+        if not user:
+            raise ValueError(f"User {user_id} not found")
+        return user
+
+    elif tool_name == "analyze_sentiment":
+        text = arguments["text"]
+        detailed = arguments.get("detailed", False)
+        positive_words = ["love", "amazing", "excited", "great", "happy", "fantastic", "excellent"]
+        negative_words = ["frustrated", "slow", "angry", "sad", "terrible", "awful", "hate"]
+        text_lower = text.lower()
+        positive_count = sum(word in text_lower for word in positive_words)
+        negative_count = sum(word in text_lower for word in negative_words)
+        total = positive_count + negative_count + 1
+        positive_score = positive_count / total
+        negative_score = negative_count / total
+        neutral_score = 1 - (positive_score + negative_score)
+        if positive_score > negative_score:
+            overall = "positive"
+            confidence = positive_score
+        elif negative_score > positive_score:
+            overall = "negative"
+            confidence = negative_score
+        else:
+            overall = "neutral"
+            confidence = neutral_score
+        result = {
+            "overall_sentiment": overall,
+            "confidence": round(confidence, 2),
+            "positive_score": round(positive_score, 2),
+            "negative_score": round(negative_score, 2),
+            "neutral_score": round(neutral_score, 2),
+        }
+        if detailed:
+            try:
+                posts = json.loads(text) if isinstance(text, str) and text.startswith("[") else [text]
+                result["details"] = [{"post": post, "sentiment": overall} for post in posts[:3]]
+            except Exception:
+                result["details"] = []
+        return result
+
+    elif tool_name == "translate_text":
+        text = arguments["text"]
+        source_lang = arguments.get("source_lang", "en")
+        target_lang = arguments["target_lang"]
+        if target_lang == "es":
+            translated = f"[ES] {text}"
+        elif target_lang == "fr":
+            translated = f"[FR] {text}"
+        else:
+            translated = text
+        return {
+            "original_text": text,
+            "translated_text": translated,
+            "source_lang": source_lang,
+            "target_lang": target_lang,
+        }
+
+    elif tool_name == "generate_summary":
+        text = arguments["text"]
+        max_length = arguments.get("max_length", 50)
+        words = text.split()
+        summary_words = words[: min(len(words), max_length)]
+        summary = " ".join(summary_words)
+        if len(words) > max_length:
+            summary += "..."
+        compression_ratio = len(summary_words) / len(words) if words else 0
+        return {
+            "summary": summary,
+            "word_count": len(summary_words),
+            "compression_ratio": round(compression_ratio, 2),
+        }
+
+    elif tool_name == "calculate_metrics":
+        user_data = arguments["user_data"]
+        include_engagement = arguments.get("include_engagement_score", True)
+        metrics = user_data.get("metrics", {})
+        posts_count = metrics.get("posts_count", 0)
+        followers = metrics.get("followers", 0)
+        following = metrics.get("following", 0)
+        engagement_score = 0
+        if include_engagement:
+            engagement_score = (followers * 2 + posts_count * 3) / 10
+        follower_ratio = followers / following if following > 0 else 0
+        if posts_count > 5:
+            activity_level = "high"
+        elif posts_count > 2:
+            activity_level = "medium"
+        else:
+            activity_level = "low"
+        return {
+            "engagement_score": round(engagement_score, 2),
+            "activity_level": activity_level,
+            "follower_ratio": round(follower_ratio, 2),
+            "total_posts": posts_count,
+        }
+
+    elif tool_name == "format_report":
+        user_name = arguments["user_name"]
+        sentiment_data = arguments.get("sentiment", {})
+        metrics_data = arguments.get("metrics", {})
+        summary = arguments.get("summary", "")
+        report_lines = [
+            f"# User Report: {user_name}",
+            "",
+            "## Overview",
+            f"Generated on: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "",
+        ]
+        sections = ["Overview"]
+        if metrics_data:
+            sections.append("Metrics")
+            report_lines.extend(
+                [
+                    "## Metrics",
+                    f"- Engagement Score: {metrics_data.get('engagement_score', 'N/A')}",
+                    f"- Activity Level: {metrics_data.get('activity_level', 'N/A')}",
+                    f"- Follower Ratio: {metrics_data.get('follower_ratio', 'N/A')}",
+                    f"- Total Posts: {metrics_data.get('total_posts', 'N/A')}",
+                    "",
+                ]
+            )
+        if sentiment_data:
+            sections.append("Sentiment Analysis")
+            report_lines.extend(
+                [
+                    "## Sentiment Analysis",
+                    f"- Overall Sentiment: **{sentiment_data.get('overall_sentiment', 'N/A')}**",
+                    f"- Confidence: {sentiment_data.get('confidence', 'N/A')}",
+                    f"- Positive Score: {sentiment_data.get('positive_score', 'N/A')}",
+                    f"- Negative Score: {sentiment_data.get('negative_score', 'N/A')}",
+                    "",
+                ]
+            )
+        if summary:
+            sections.append("Summary")
+            report_lines.extend(["## Summary", summary, ""])
+        report = "\n".join(report_lines)
+        return {"report": report, "sections": sections}
+
+    else:
+        raise ValueError(f"Unknown tool: {tool_name}")
+
+
+@server.chain_tools()
+async def chain_tools_handler(tool_name: str, arguments: dict) -> dict:
     """
-    logger.info(f"🔗 Chain executor calling: {tool_name}")
-    return await call_tool(tool_name, arguments)
+    Handler registered with @server.chain_tools() decorator.
+    This is used internally by the MCP framework for the tools/chain protocol method.
+    """
+    return await chain_tool_executor(tool_name, arguments)
 
 
 async def main():

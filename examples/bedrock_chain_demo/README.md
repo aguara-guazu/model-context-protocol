@@ -1,309 +1,304 @@
-# MCP Tool Chaining Demo with AWS Bedrock
+# MCP Tool Chaining Demo
 
-Este directorio contiene una demostración completa de la funcionalidad de **Tool Chaining** en MCP, con un cliente que usa Claude Sonnet 4.5 a través de AWS Bedrock.
+Esta demostración muestra cómo funciona **Tool Chaining** en MCP con el **enfoque correcto**: el LLM decide automáticamente cuándo y cómo encadenar tools.
+
+## ⚠️ Concepto Importante
+
+**EL LLM DECIDE, NO EL DESARROLLADOR**
+
+Tool chaining NO es algo que el desarrollador programa. El servidor expone:
+1. Sus herramientas normales (fetch_user_data, analyze_sentiment, etc.)
+2. Una herramienta especial `chain_tools` que explica al LLM cómo encadenar
+
+El LLM recibe TODAS las herramientas y **decide por sí mismo** si:
+- Usar herramientas individuales, o
+- Encadenarlas usando `chain_tools`
+
+El desarrollador NO escribe código para armar chains. Solo usa MCP normalmente.
 
 ## 📁 Contenido
 
-- **`server.py`**: Servidor MCP con 6 herramientas que soportan chaining
-- **`client_bedrock.py`**: Cliente que usa AWS Bedrock para probar el servidor
-- **`manual_test.py`**: Script para pruebas manuales sin AWS
-- **`README.md`**: Esta documentación
+- **`server.py`**: Servidor MCP con 6 herramientas + `chain_tools`
+- **`test_llm_decides.py`**: ✅ **Prueba CORRECTA** donde Claude decide qué hacer
+- **`old_incorrect_tests/`**: ❌ Pruebas incorrectas (no usar como ejemplo)
 
 ## 🛠️ Herramientas Disponibles
 
-El servidor proporciona 6 herramientas que pueden encadenarse:
+El servidor expone 7 herramientas vía MCP:
 
-1. **`fetch_user_data`** - Obtiene datos completos de un usuario
-   - Input: `user_id`
-   - Output: `{id, name, email, bio, posts, language, metrics}`
+### 1. `chain_tools` (Herramienta Especial)
+El LLM usa esta herramienta cuando decide que quiere encadenar múltiples operaciones.
 
-2. **`analyze_sentiment`** - Analiza el sentimiento de un texto
-   - Input: `text`, `detailed` (optional)
-   - Output: `{overall_sentiment, confidence, positive_score, negative_score}`
+**Descripción que recibe el LLM:**
+```
+Execute multiple tools in sequence with automatic reference resolution.
 
-3. **`translate_text`** - Traduce texto entre idiomas
-   - Input: `text`, `source_lang`, `target_lang`
-   - Output: `{original_text, translated_text, source_lang, target_lang}`
+This tool allows you to chain multiple tool calls together. Results from earlier steps
+can be referenced in later steps using dot notation (e.g., "step1.field" or just "step1"
+for the whole object).
 
-4. **`generate_summary`** - Genera un resumen conciso
-   - Input: `text`, `max_length` (optional)
-   - Output: `{summary, word_count, compression_ratio}`
+Example chain to fetch a user and analyze their bio:
+{
+  "chain": [
+    {
+      "tool": "fetch_user_data",
+      "id": "user",
+      "params": {"user_id": "user123"}
+    },
+    {
+      "tool": "analyze_sentiment",
+      "id": "sentiment",
+      "params": {
+        "text": "user.bio",
+        "detailed": false
+      }
+    }
+  ],
+  "returnFormat": "final_only"
+}
 
-5. **`calculate_metrics`** - Calcula métricas de usuario
-   - Input: `user_data`, `include_engagement_score` (optional)
-   - Output: `{engagement_score, activity_level, follower_ratio, total_posts}`
+Reference syntax:
+- "stepId.field" - Access a specific field from a previous step's result
+- "stepId" - Use the entire result object from a previous step
+- Nested fields: "step1.metrics.followers"
+```
 
-6. **`format_report`** - Formatea datos en un reporte markdown
-   - Input: `user_name`, `sentiment`, `metrics`, `summary` (optional)
-   - Output: `{report, sections}`
+### 2-7. Herramientas de Negocio
 
-## 🚀 Configuración
+- **`fetch_user_data`** - Obtiene datos de usuario
+- **`analyze_sentiment`** - Analiza sentimiento de texto
+- **`translate_text`** - Traduce texto
+- **`generate_summary`** - Genera resúmenes
+- **`calculate_metrics`** - Calcula métricas
+- **`format_report`** - Formatea reportes
 
-### 1. Instalar dependencias
+## 🚀 Cómo Ejecutar la Prueba Correcta
+
+### Requisitos
 
 ```bash
-# Desde la raíz del proyecto
-cd /home/user/model-context-protocol
-
-# Instalar el SDK de MCP
+# Instalar MCP SDK
 pip install -e .
 
-# Instalar boto3 para AWS Bedrock
-pip install boto3
+# Instalar dependencias del cliente
+pip install httpx
 ```
 
-### 2. Configurar AWS Credentials
+### Configurar API Key
 
 ```bash
-export AWS_ACCESS_KEY_ID="your_access_key"
-export AWS_SECRET_ACCESS_KEY="your_secret_key"
-export AWS_REGION="us-east-1"
-
-# O configurar con AWS CLI
-aws configure
+export ANTHROPIC_API_KEY="tu_api_key_aqui"
 ```
 
-### 3. Verificar acceso a Bedrock
-
-Asegúrate de tener acceso al modelo Claude Sonnet 4.5:
-- Model ID: `anthropic.claude-3-5-sonnet-20241022-v2:0`
-- Región: `us-east-1` (o tu región configurada)
-
-## 📊 Ejecutar las Pruebas
-
-### Opción 1: Demostración Simple (Recomendado para empezar)
+### Ejecutar
 
 ```bash
-# No requiere dependencias adicionales
-python examples/bedrock_chain_demo/simple_test.py
+python examples/bedrock_chain_demo/test_llm_decides.py
 ```
 
-Esta demostración muestra cómo funciona el tool chaining con un mock simple:
-- ✅ Resolución de referencias (`"step1.field"`)
-- ✅ Cadenas de 2 y 4 pasos
-- ✅ Generación de reportes
-- ✅ No requiere instalar dependencias
-
-### Opción 2: Prueba Completa con MCP (Requiere uv)
-
-```bash
-# Desde la raíz del proyecto
-cd /home/user/model-context-protocol
-uv run python examples/bedrock_chain_demo/manual_test.py
-```
-
-Esto ejecutará pruebas completas contra el servidor MCP real:
-1. **Test 1**: Llamada a una sola herramienta
-2. **Test 2**: Cadena simple (Fetch → Analyze)
-3. **Test 3**: Cadena compleja (Fetch → Analyze → Calculate → Report)
-4. **Test 4**: Chain con traducción
-5. **Test 5**: Manejo de errores
-
-### Opción 3: Con AWS Bedrock + Claude Sonnet 4.5
-
-```bash
-# Configurar AWS primero
-export AWS_ACCESS_KEY_ID="your_key"
-export AWS_SECRET_ACCESS_KEY="your_secret"
-export AWS_REGION="us-east-1"
-
-# Instalar boto3
-pip install boto3
-
-# Ejecutar
-cd /home/user/model-context-protocol
-uv run python examples/bedrock_chain_demo/client_bedrock.py
-```
-
-Esto ejecutará 4 tests usando Claude via Bedrock para orquestar los chains.
-
-### Opción 4: Ejecutar solo el servidor
-
-```bash
-cd /home/user/model-context-protocol
-uv run python examples/bedrock_chain_demo/server.py
-```
-
-Luego puedes conectarte con cualquier cliente MCP.
-
-## 🔗 Ejemplos de Chains
-
-### Chain Simple: Fetch + Analyze
-
-```json
-{
-  "method": "tools/chain",
-  "params": {
-    "chain": [
-      {
-        "tool": "fetch_user_data",
-        "id": "user",
-        "params": {"user_id": "user123"}
-      },
-      {
-        "tool": "analyze_sentiment",
-        "id": "sentiment",
-        "params": {"text": "user.bio"}
-      }
-    ]
-  }
-}
-```
-
-### Chain Complejo: Full User Report
-
-```json
-{
-  "method": "tools/chain",
-  "params": {
-    "chain": [
-      {
-        "tool": "fetch_user_data",
-        "id": "user",
-        "params": {"user_id": "user123"}
-      },
-      {
-        "tool": "analyze_sentiment",
-        "id": "sentiment",
-        "params": {"text": "user.bio"},
-        "onFailure": {"action": "skip_and_continue"}
-      },
-      {
-        "tool": "calculate_metrics",
-        "id": "metrics",
-        "params": {"user_data": "user"}
-      },
-      {
-        "tool": "format_report",
-        "id": "report",
-        "params": {
-          "user_name": "user.name",
-          "sentiment": "sentiment",
-          "metrics": "metrics"
-        }
-      }
-    ],
-    "returnFormat": "final_only"
-  }
-}
-```
-
-## 📈 Output Esperado
-
-Cuando ejecutes `client_bedrock.py`, verás:
+## 📊 Qué Hace la Prueba Correcta
 
 ```
-====================================================================
-MCP TOOL CHAINING DEMO - AWS BEDROCK CLIENT
-====================================================================
+1. Conecta al servidor MCP
+2. Hace list_tools() y obtiene las 7 herramientas
+3. Pasa TODAS las herramientas a Claude
+4. Le pregunta a Claude: "Fetch user data for user123, analyze sentiment,
+   and calculate metrics"
+5. Claude DECIDE qué hacer:
+   - Opción A: Llamar 3 herramientas individuales
+   - Opción B: Llamar chain_tools con un chain de 3 pasos
+6. Ejecuta lo que Claude decidió
+7. Muestra los resultados
+```
 
-🔌 Connecting to MCP server...
-✅ Connected to: bedrock-chain-demo
-   Protocol version: 2025-06-18
-✅ Server supports tool chaining!
+## 🎯 Ejemplo de Salida
 
-📦 Available tools: 6
-   [✓] fetch_user_data: Fetch complete user profile data...
-   [✓] analyze_sentiment: Analyze sentiment of text...
-   [✓] translate_text: Translate text between languages
-   [✓] generate_summary: Generate a concise summary...
-   [✓] calculate_metrics: Calculate various metrics...
-   [✓] format_report: Format various data into...
+```
+================================================================================
+REAL TEST: Claude Decides Whether to Chain Tools
+================================================================================
 
-============================================================
-TEST 1: Single Tool Call
-============================================================
-...
+📋 Step 1: Getting tools from MCP server...
+✅ Received 7 tools from server:
+  - chain_tools: Execute multiple tools in sequence with automatic reference...
+  - fetch_user_data: Fetch complete user profile data including bio, posts...
+  - analyze_sentiment: Analyze sentiment of text and return positive/negative...
+  - translate_text: Translate text from one language to another
+  - generate_summary: Generate a concise summary from longer text
+  - calculate_metrics: Calculate various metrics and statistics from user data
+  - format_report: Format various data into a structured markdown report
 
-============================================================
-TEST 2: Simple Tool Chain (Fetch → Analyze)
-============================================================
-...
+🤖 Step 2: Asking Claude to perform a multi-step task...
+Question: I need you to fetch user data for user123, analyze the sentiment of
+their bio, and calculate their engagement metrics. Please help me with this.
 
-============================================================
-TEST 3: Complex Chain (Fetch → Analyze → Calculate → Report)
-============================================================
-...
+📥 Claude's response:
+Stop reason: tool_use
 
-📥 Chain Status: success
-   Total steps: 4
-   ✅ user: success (15.32ms)
-   ✅ sentiment: success (8.45ms)
-   ✅ metrics: success (3.21ms)
-   ✅ report: success (5.67ms)
+🔧 Claude decided to use 1 tool call(s):
 
-📄 Final Report:
-# User Report: Alice Johnson
+  [1] Tool: chain_tools
+     🎉 CLAUDE CHOSE TO CHAIN TOOLS!
+     Chain has 3 steps:
+       1. user: fetch_user_data <- {'user_id': 'user123'}
+       2. sentiment: analyze_sentiment <- {'text': 'user.bio', 'detailed': False}
+       3. metrics: calculate_metrics <- {'user_data': 'user'}
 
-## Overview
-Generated on: 2024-01-15 14:30:00
+⚙️  Step 3: Executing Claude's tool calls...
+Executing tool: chain_tools
+INFO: 🔗 Executing chain with 3 steps
+INFO:   → Step executing tool: fetch_user_data
+INFO:   → Step executing tool: analyze_sentiment
+INFO:   → Step executing tool: calculate_metrics
+✅ chain_tools completed
 
-## Metrics
-- Engagement Score: 39.0
-- Activity Level: medium
+📊 Chain Execution Results:
+   Status: success
+   Steps executed: 3
+     ✅ user: success (3.45ms)
+     ✅ sentiment: success (2.78ms)
+     ✅ metrics: success (1.89ms)
+
+   Final Result:
+   {
+     "engagement_score": 30.9,
+     "activity_level": "medium",
+     "follower_ratio": 0.75,
+     "total_posts": 3
+   }
+
+🤖 Step 4: Getting Claude's final response...
+
+💬 Claude's Final Answer:
+I've successfully fetched the user data and completed the analysis! Here's what I found:
+
+**User: Alice Johnson**
+
+**Sentiment Analysis of Bio:**
+- Sentiment: Positive
+- Confidence: 67%
+- The user's bio shows enthusiasm about technology and learning
+
+**Engagement Metrics:**
+- Engagement Score: 30.9
+- Activity Level: Medium
 - Follower Ratio: 0.75
 - Total Posts: 3
 
-## Sentiment Analysis
-- Overall Sentiment: **positive**
-- Confidence: 0.5
-- Positive Score: 0.5
-- Negative Score: 0.0
+The user appears to be moderately active with a positive outlook!
 
-...
-
-✅ ALL TESTS COMPLETED SUCCESSFULLY!
+================================================================================
+✅ TEST COMPLETE
+================================================================================
 ```
 
-## 🎯 Beneficios Demostrados
+## 🔑 Puntos Clave
 
-1. **Reducción de Tokens**: Los datos intermedios (perfil de usuario) no pasan por el contexto del modelo
-2. **Una sola RPC**: 4 pasos ejecutados con una sola llamada
-3. **Validación Semántica**: El servidor valida esquemas antes de ejecutar
-4. **Manejo de Errores**: Estrategias declarativas (skip_and_continue, abort, return_step)
-5. **Transparencia**: Trace completo de ejecución con duración de cada paso
+1. **El desarrollador NO programa chains**: Solo expone herramientas vía MCP
+2. **El LLM decide**: Recibe todas las tools y elige qué hacer
+3. **chain_tools es una tool más**: Con descripción clara para el LLM
+4. **Transparente**: El cliente solo ejecuta lo que el LLM pide
+5. **Flexible**: El LLM puede usar tools individuales O chain_tools
 
-## 🐛 Troubleshooting
+## ❌ Qué NO Hacer
 
-### Error: "AWS credentials not found"
-```bash
-# Configura tus credenciales
-export AWS_ACCESS_KEY_ID="..."
-export AWS_SECRET_ACCESS_KEY="..."
-export AWS_REGION="us-east-1"
+```python
+# ❌ MAL - El desarrollador arma la chain
+chain = [
+    ChainStep(tool="fetch_user_data", id="user", params={"user_id": "user123"}),
+    ChainStep(tool="analyze_sentiment", id="sentiment", params={"text": "user.bio"})
+]
+result = await execute_chain(chain)
 ```
 
-### Error: "Access denied to model"
-- Verifica que tienes acceso al modelo en la consola de AWS Bedrock
-- Región debe ser una que soporte Claude Sonnet 4.5
-
-### Error: "Module mcp not found"
-```bash
-# Instala el SDK desde la raíz del proyecto
-pip install -e .
+```python
+# ✅ BIEN - El LLM decide
+tools = await mcp_session.list_tools()  # Incluye chain_tools
+response = await claude_api(tools=tools, message="Analyze user123")
+# Claude decide si usar chain_tools o tools individuales
+if response.tool_use.name == "chain_tools":
+    # El LLM construyó la chain, nosotros solo ejecutamos
+    result = await mcp_session.call_tool("chain_tools", response.tool_use.input)
 ```
 
-### El servidor no responde
-```bash
-# Prueba ejecutar el servidor manualmente
-python server.py
+## 🏗️ Cómo Implementar en Tu Servidor
 
-# Debería mostrar:
-# ============================================================
-# Starting MCP Server with Tool Chaining Support
-# ============================================================
+Para que tu servidor MCP soporte tool chaining:
+
+### 1. Expón chain_tools como una tool normal
+
+```python
+@server.list_tools()
+async def list_tools() -> list[types.Tool]:
+    return [
+        types.Tool(
+            name="chain_tools",
+            description="Execute multiple tools in sequence... [explicación detallada]",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "chain": {
+                        "type": "array",
+                        "items": {...}  # Schema de ChainStep
+                    },
+                    "returnFormat": {...}
+                }
+            }
+        ),
+        # ... tus otras tools
+    ]
 ```
 
-## 📚 Más Información
+### 2. Maneja la llamada a chain_tools
+
+```python
+@server.call_tool()
+async def call_tool(name: str, arguments: dict) -> dict:
+    if name == "chain_tools":
+        # Usar ChainExecutor del MCP SDK
+        from mcp.server.lowlevel.chain import ChainExecutor, ChainValidator
+
+        chain_steps = [types.ChainStep(**step) for step in arguments["chain"]]
+
+        validator = ChainValidator(server._tool_cache)
+        validator.validate_chain(chain_steps)
+
+        executor = ChainExecutor(server._tool_cache, tool_executor_func)
+        result = await executor.execute_chain(
+            chain_steps,
+            arguments.get("returnFormat", "final_only"),
+            arguments.get("timeout")
+        )
+        return result
+
+    # ... manejar tus otras tools
+```
+
+### 3. Listo!
+
+El LLM automáticamente verá chain_tools en la lista de herramientas y decidirá cuándo usarla.
+
+## 📚 Recursos
 
 - [Documentación de Tool Chaining](../../docs/tool_chaining.md)
-- [Propuesta Técnica](../../PROPOSAL.md)
-- [Especificación MCP](https://modelcontextprotocol.io)
+- [Tests Unitarios](../../tests/server/test_tool_chaining.py)
+- [Propuesta Original (MEP)](../../PROPOSAL.md)
 
-## 💡 Ideas para Extender
+## 💡 Preguntas Frecuentes
 
-1. Agregar más herramientas (email, database, API calls)
-2. Implementar chains condicionales complejos
-3. Añadir métricas de rendimiento
-4. Crear una interfaz web para visualizar chains
-5. Implementar retry automático en fallos
+**P: ¿El desarrollador del servidor necesita saber sobre chains?**
+R: No. Solo expone `chain_tools` como una tool más. El MCP SDK maneja todo.
+
+**P: ¿El desarrollador del cliente necesita saber sobre chains?**
+R: No. Solo ejecuta las tool calls que el LLM solicita, igual que siempre.
+
+**P: ¿Cuándo el LLM decide usar chain_tools vs tools individuales?**
+R: El LLM decide basándose en la tarea. Si necesita pasar datos entre tools,
+probablemente use chain_tools. Si son operaciones independientes, usará tools individuales.
+
+**P: ¿Puedo forzar al LLM a usar chain_tools?**
+R: Puedes sugerirlo en el prompt, pero la decisión final es del LLM.
+
+**P: ¿Funciona con cualquier modelo?**
+R: Cualquier modelo que soporte function calling y sepa seguir instrucciones complejas.
+Claude 3.5 Sonnet/Haiku funcionan muy bien.
