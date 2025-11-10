@@ -212,7 +212,10 @@ Use this tool when you need to:
         ),
         types.Tool(
             name="fetch_user_data",
-            description="Fetch complete user profile data including bio, posts, and metrics",
+            description=(
+                "Fetch complete user profile data including bio, posts, and metrics. "
+                "Returns user object with fields: id, name (not username!), email, bio, posts, language, metrics"
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -223,18 +226,23 @@ Use this tool when you need to:
             outputSchema={
                 "type": "object",
                 "properties": {
-                    "id": {"type": "string"},
-                    "name": {"type": "string"},
-                    "email": {"type": "string"},
-                    "bio": {"type": "string"},
-                    "posts": {"type": "array", "items": {"type": "string"}},
-                    "language": {"type": "string"},
+                    "id": {"type": "string", "description": "User's unique identifier"},
+                    "name": {"type": "string", "description": "User's display name (use this, not username)"},
+                    "email": {"type": "string", "description": "User's email address"},
+                    "bio": {"type": "string", "description": "User's biography text"},
+                    "posts": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Array of user's posts",
+                    },
+                    "language": {"type": "string", "description": "User's preferred language code"},
                     "metrics": {
                         "type": "object",
+                        "description": "User engagement metrics",
                         "properties": {
-                            "posts_count": {"type": "number"},
-                            "followers": {"type": "number"},
-                            "following": {"type": "number"},
+                            "posts_count": {"type": "number", "description": "Total number of posts"},
+                            "followers": {"type": "number", "description": "Number of followers"},
+                            "following": {"type": "number", "description": "Number of users following"},
                         },
                     },
                 },
@@ -243,7 +251,10 @@ Use this tool when you need to:
         ),
         types.Tool(
             name="analyze_sentiment",
-            description="Analyze sentiment of text and return positive/negative/neutral classification",
+            description=(
+                "Analyze sentiment of text and return positive/negative/neutral classification. "
+                "Returns: overall_sentiment, confidence, positive_score, negative_score, neutral_score, details"
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -262,19 +273,32 @@ Use this tool when you need to:
                     "overall_sentiment": {
                         "type": "string",
                         "enum": ["positive", "negative", "neutral"],
+                        "description": "Overall sentiment classification",
                     },
-                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-                    "positive_score": {"type": "number"},
-                    "negative_score": {"type": "number"},
-                    "neutral_score": {"type": "number"},
-                    "details": {"type": "array", "items": {"type": "object"}},
+                    "confidence": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "description": "Confidence score (0-1)",
+                    },
+                    "positive_score": {"type": "number", "description": "Positive sentiment score"},
+                    "negative_score": {"type": "number", "description": "Negative sentiment score"},
+                    "neutral_score": {"type": "number", "description": "Neutral sentiment score"},
+                    "details": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                        "description": "Detailed analysis per post",
+                    },
                 },
                 "required": ["overall_sentiment", "confidence"],
             },
         ),
         types.Tool(
             name="translate_text",
-            description="Translate text from one language to another",
+            description=(
+                "Translate text from one language to another. "
+                "Returns: original_text, translated_text, source_lang, target_lang"
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -293,17 +317,19 @@ Use this tool when you need to:
             outputSchema={
                 "type": "object",
                 "properties": {
-                    "original_text": {"type": "string"},
-                    "translated_text": {"type": "string"},
-                    "source_lang": {"type": "string"},
-                    "target_lang": {"type": "string"},
+                    "original_text": {"type": "string", "description": "Original untranslated text"},
+                    "translated_text": {"type": "string", "description": "Translated text"},
+                    "source_lang": {"type": "string", "description": "Detected or specified source language"},
+                    "target_lang": {"type": "string", "description": "Target language"},
                 },
                 "required": ["translated_text"],
             },
         ),
         types.Tool(
             name="generate_summary",
-            description="Generate a concise summary from longer text",
+            description=(
+                "Generate a concise summary from longer text. Returns: summary, word_count, compression_ratio"
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -319,26 +345,30 @@ Use this tool when you need to:
             outputSchema={
                 "type": "object",
                 "properties": {
-                    "summary": {"type": "string"},
-                    "word_count": {"type": "number"},
-                    "compression_ratio": {"type": "number"},
+                    "summary": {"type": "string", "description": "Generated summary text"},
+                    "word_count": {"type": "number", "description": "Number of words in summary"},
+                    "compression_ratio": {"type": "number", "description": "Ratio of summary to original length"},
                 },
                 "required": ["summary"],
             },
         ),
         types.Tool(
             name="calculate_metrics",
-            description="Calculate various metrics and statistics from user data",
+            description=(
+                "Calculate various metrics and statistics from user data. "
+                "Returns: engagement_score, activity_level, follower_ratio, total_posts"
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "user_data": {
                         "type": "object",
-                        "description": "User data object containing metrics",
+                        "description": "User data object containing metrics (from fetch_user_data)",
                     },
                     "include_engagement_score": {
                         "type": "boolean",
                         "default": True,
+                        "description": "Whether to calculate engagement score",
                     },
                 },
                 "required": ["user_data"],
@@ -346,23 +376,36 @@ Use this tool when you need to:
             outputSchema={
                 "type": "object",
                 "properties": {
-                    "engagement_score": {"type": "number"},
-                    "activity_level": {"type": "string"},
-                    "follower_ratio": {"type": "number"},
-                    "total_posts": {"type": "number"},
+                    "engagement_score": {"type": "number", "description": "Calculated engagement score"},
+                    "activity_level": {
+                        "type": "string",
+                        "enum": ["high", "medium", "low"],
+                        "description": "User activity level",
+                    },
+                    "follower_ratio": {"type": "number", "description": "Ratio of followers to following"},
+                    "total_posts": {"type": "number", "description": "Total number of posts"},
                 },
                 "required": ["engagement_score", "activity_level"],
             },
         ),
         types.Tool(
             name="format_report",
-            description="Format various data into a structured markdown report",
+            description=(
+                "Format various data into a structured markdown report. "
+                "Returns: report (markdown string), sections (array of section names)"
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "user_name": {"type": "string"},
-                    "sentiment": {"type": "object", "description": "Sentiment analysis results"},
-                    "metrics": {"type": "object", "description": "Calculated metrics"},
+                    "user_name": {
+                        "type": "string",
+                        "description": "User's display name (use 'name' field from fetch_user_data)",
+                    },
+                    "sentiment": {
+                        "type": "object",
+                        "description": "Sentiment analysis results from analyze_sentiment",
+                    },
+                    "metrics": {"type": "object", "description": "Calculated metrics from calculate_metrics"},
                     "summary": {"type": "string", "description": "Optional text summary"},
                 },
                 "required": ["user_name"],
@@ -371,7 +414,11 @@ Use this tool when you need to:
                 "type": "object",
                 "properties": {
                     "report": {"type": "string", "description": "Formatted markdown report"},
-                    "sections": {"type": "array", "items": {"type": "string"}},
+                    "sections": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Names of sections included in report",
+                    },
                 },
                 "required": ["report"],
             },
