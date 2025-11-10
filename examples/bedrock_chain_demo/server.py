@@ -421,9 +421,32 @@ async def call_tool(name: str, arguments: dict) -> dict:
 
         # Execute chain
         executor = ChainExecutor(server._tool_cache, chain_tool_executor)
-        result = await executor.execute_chain(chain_steps, return_format, timeout)
+        try:
+            result = await executor.execute_chain(chain_steps, return_format, timeout)
 
-        return result
+            # Convert ChainToolResult to dict for serialization
+            # Ensure all values are JSON-serializable and match the schema
+            steps_executed = []
+            for step in result.stepsExecuted:
+                steps_executed.append(
+                    {
+                        "stepId": step.stepId,
+                        "status": step.status,
+                        "executionTime": step.durationMs or 0.0,
+                        "result": step.output or {},
+                        "error": step.error or "",
+                    }
+                )
+
+            return {
+                "status": result.status,
+                "result": result.result or {},
+                "stepsExecuted": steps_executed,
+                "error": result.error or "",
+            }
+        except Exception as e:
+            logger.exception("Error during chain execution")
+            return {"status": "failed", "error": str(e), "stepsExecuted": [], "result": {}}
 
     elif name == "fetch_user_data":
         user_id = arguments["user_id"]
