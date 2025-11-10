@@ -209,7 +209,10 @@ class Server(Generic[LifespanResultT, RequestT]):
 
         # Set tool capabilities if handler exists
         if types.ListToolsRequest in self.request_handlers:
-            tools_capability = types.ToolsCapability(listChanged=notification_options.tools_changed)
+            chaining_supported = types.ChainToolRequest in self.request_handlers
+            tools_capability = types.ToolsCapability(
+                listChanged=notification_options.tools_changed, chaining=chaining_supported if chaining_supported else None
+            )
 
         # Set logging capabilities if handler exists
         if types.SetLevelRequest in self.request_handlers:
@@ -544,6 +547,82 @@ class Server(Generic[LifespanResultT, RequestT]):
                     return self._make_error_result(str(e))
 
             self.request_handlers[types.CallToolRequest] = handler
+            return func
+
+        return decorator
+
+    def chain_tools(self, *, validate_chain: bool = True):
+        """Register a tool chaining handler.
+
+        Args:
+            validate_chain: If True, validates the chain before execution. Default is True.
+
+        The handler validates the chain structure, executes tools in sequence,
+        and handles errors according to the declared strategies.
+        """
+
+        def decorator(func: Callable[..., Awaitable[Any]]):
+            logger.debug("Registering handler for ChainToolRequest")
+
+            from mcp.server.lowlevel.chain import ChainExecutor, ChainValidator
+
+            async def handler(req: types.ChainToolRequest):
+                try:
+                    chain = req.params.chain
+                    return_format = req.params.returnFormat
+                    timeout = req.params.timeout
+
+                    # Validate chain if enabled
+                    if validate_chain:
+                        # Get current tool list
+                        if types.ListToolsRequest not in self.request_handlers:
+                            return types.ServerResult(
+                                types.ChainToolResult(
+                                    status="failed",
+                                    result=None,
+                                    stepsExecuted=[],
+                                    error="Tool chaining requires list_tools handler to be registered",
+                                )
+                            )
+
+                        # Refresh tool cache
+                        if not self._tool_cache:
+                            await self.request_handlers[types.ListToolsRequest](None)
+
+                        # Validate the chain
+                        validator = ChainValidator(self._tool_cache)
+                        try:
+                            validator.validate_chain(chain)
+                        except ValueError as e:
+                            return types.ServerResult(
+                                types.ChainToolResult(
+                                    status="failed",
+                                    result=None,
+                                    stepsExecuted=[],
+                                    error=f"Chain validation error: {str(e)}",
+                                )
+                            )
+
+                    # Create executor
+                    executor = ChainExecutor(self._tool_cache, func)
+
+                    # Execute chain
+                    result = await executor.execute_chain(chain, return_format, timeout)
+
+                    return types.ServerResult(result)
+
+                except Exception as e:
+                    logger.exception("Error handling chain tool request")
+                    return types.ServerResult(
+                        types.ChainToolResult(
+                            status="failed",
+                            result=None,
+                            stepsExecuted=[],
+                            error=f"Chain execution error: {str(e)}",
+                        )
+                    )
+
+            self.request_handlers[types.ChainToolRequest] = handler
             return func
 
         return decorator

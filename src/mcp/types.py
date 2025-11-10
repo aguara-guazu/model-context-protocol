@@ -299,6 +299,8 @@ class ToolsCapability(BaseModel):
 
     listChanged: bool | None = None
     """Whether this server supports notifications for changes to the tool list."""
+    chaining: bool | None = None
+    """Whether this server supports declarative tool chaining via tools/chain."""
     model_config = ConfigDict(extra="allow")
 
 
@@ -932,6 +934,150 @@ class ToolListChangedNotification(Notification[NotificationParams | None, Litera
     params: NotificationParams | None = None
 
 
+class ChainStepOnSuccess(BaseModel):
+    """Actions to take when a chain step succeeds."""
+
+    action: Literal["continue", "stop_and_return"] = "continue"
+    """What to do after this step succeeds. Default: continue to next step."""
+
+    returnStep: str | None = None
+    """If action is 'stop_and_return', return the output from this step ID instead."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class ChainStepOnFailure(BaseModel):
+    """Actions to take when a chain step fails."""
+
+    action: Literal["abort", "return_step", "skip_and_continue"] = "abort"
+    """
+    What to do if this step fails:
+    - abort: Stop execution and return error
+    - return_step: Return output from specified step
+    - skip_and_continue: Continue to next step
+    """
+
+    returnStep: str | None = None
+    """If action is 'return_step', which step's output to return."""
+
+    retry: bool = False
+    """Whether to retry this step once on failure."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class ChainStepValidation(BaseModel):
+    """Validation rules for a chain step's output."""
+
+    requireField: str | None = None
+    """Fail if the output doesn't contain this field."""
+
+    requireNonEmpty: bool | None = None
+    """Fail if the output is empty."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class ChainStep(BaseModel):
+    """A single step in a tool chain."""
+
+    tool: str
+    """The name of the tool to call."""
+
+    id: str
+    """Unique identifier for this step within the chain."""
+
+    params: dict[str, Any]
+    """
+    Parameters to pass to the tool.
+    Values can be literals or references like "step_id.field_name".
+    """
+
+    onSuccess: ChainStepOnSuccess | None = None
+    """Actions to take when this step succeeds."""
+
+    onFailure: ChainStepOnFailure | None = None
+    """Actions to take when this step fails."""
+
+    validation: ChainStepValidation | None = None
+    """Optional validation rules for the output."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class ChainToolRequestParams(RequestParams):
+    """Parameters for chaining multiple tool calls."""
+
+    chain: list[ChainStep]
+    """The sequence of tool calls to execute."""
+
+    returnFormat: Literal["final_only", "full"] = "final_only"
+    """
+    Whether to return only the final result or all step results.
+    Default: final_only
+    """
+
+    timeout: float | None = None
+    """Optional timeout in seconds for the entire chain execution."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class ChainToolRequest(Request[ChainToolRequestParams, Literal["tools/chain"]]):
+    """Request to execute a chain of tool calls."""
+
+    method: Literal["tools/chain"] = "tools/chain"
+    params: ChainToolRequestParams
+
+
+class ChainStepResult(BaseModel):
+    """Result of executing a single step in a chain."""
+
+    stepId: str
+    """The ID of the step that was executed."""
+
+    tool: str
+    """The name of the tool that was called."""
+
+    status: Literal["success", "failed", "skipped"]
+    """The execution status of this step."""
+
+    durationMs: float | None = None
+    """How long this step took to execute, in milliseconds."""
+
+    input: dict[str, Any] | None = None
+    """The resolved input parameters that were passed to the tool."""
+
+    output: dict[str, Any] | None = None
+    """The structured output from the tool (omitted if failed)."""
+
+    error: str | None = None
+    """Error message if the step failed (omitted if success)."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class ChainToolResult(Result):
+    """The server's response to a tools/chain request."""
+
+    status: Literal["success", "partial_success", "failed"]
+    """
+    Overall status of the chain execution:
+    - success: All steps completed successfully
+    - partial_success: Some steps failed but chain completed
+    - failed: Chain execution stopped due to error
+    """
+
+    result: dict[str, Any] | None = None
+    """The final result or the result from a specific step as requested."""
+
+    stepsExecuted: list[ChainStepResult]
+    """Details of all steps that were executed."""
+
+    error: str | None = None
+    """Overall error message (only if status is 'failed')."""
+
+
 LoggingLevel = Literal["debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"]
 
 
@@ -1261,6 +1407,7 @@ class ClientRequest(
         | SubscribeRequest
         | UnsubscribeRequest
         | CallToolRequest
+        | ChainToolRequest
         | ListToolsRequest
     ]
 ):
@@ -1344,6 +1491,7 @@ class ServerResult(
         | ListResourceTemplatesResult
         | ReadResourceResult
         | CallToolResult
+        | ChainToolResult
         | ListToolsResult
     ]
 ):
